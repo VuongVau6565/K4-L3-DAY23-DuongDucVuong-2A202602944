@@ -1,0 +1,8 @@
+{"event": "state_change", "ts": 1791617712.5972445, "region": "b", "to": "UNHEALTHY", "reason": "HTTP 503", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 3}
+{"event": "state_change", "ts": 1791617734.5200324, "region": "a", "to": "UNHEALTHY", "reason": "timed out", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 3}
+{"event": "state_change", "ts": 1791617734.566002, "region": "b", "to": "HEALTHY", "reason": "HTTP 200", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 0}
+{"event": "state_change", "ts": 1791618381.830562, "region": "a", "to": "UNHEALTHY", "reason": "timed out", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 3}
+{"event": "state_change", "ts": 1791618841.7227693, "region": "a", "to": "UNHEALTHY", "reason": "timed out", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 3}
+{"event": "state_change", "ts": 1791619151.4263651, "region": "b", "to": "UNHEALTHY", "reason": "HTTP 503", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 3}
+{"event": "state_change", "ts": 1791619183.4077694, "region": "a", "to": "UNHEALTHY", "reason": "timed out", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 3}
+{"event": "state_change", "ts": 1791619198.4115205, "region": "b", "to": "HEALTHY", "reason": "HTTP 200", "interval_s": 5.0, "threshold": 3, "consecutive_fails": 0}

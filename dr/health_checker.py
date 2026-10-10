@@ -29,13 +29,69 @@ URL = {"a": "http://127.0.0.1:8001", "b": "http://127.0.0.1:8002"}
 
 
 def probe(region: str, timeout: float) -> tuple[bool, str]:
-    """TODO: trả về (ready, reason). Timeout PHẢI có — netblock làm request treo mãi."""
-    raise NotImplementedError
+    """Kiểm tra readiness endpoint của một region."""
+    response_url = f"{URL[region]}/readyz"
+    try:
+        response = httpx.get(response_url, timeout=timeout)
+    except httpx.RequestError as exc:
+        return False, str(exc)
+
+    if response.status_code == 200:
+        return True, "HTTP 200"
+    return False, f"HTTP {response.status_code}"
 
 
 def run(interval: float, timeout: float, threshold: int, duration: float, out: pathlib.Path):
-    """TODO: vòng lặp poll + phát hiện transition + ghi JSONL."""
-    raise NotImplementedError
+    """Poll cả hai region và chỉ ghi log khi trạng thái thay đổi."""
+    if interval <= 0:
+        raise ValueError("interval must be greater than zero")
+    if threshold <= 0:
+        raise ValueError("threshold must be greater than zero")
+    if duration < 0:
+        raise ValueError("duration must not be negative")
+
+    states = {region: "HEALTHY" for region in URL}
+    consecutive_fails = {region: 0 for region in URL}
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    started_at = time.monotonic()
+    deadline = started_at + duration
+    next_poll = started_at
+
+    with out.open("a", encoding="utf-8") as events_file:
+        while time.monotonic() < deadline:
+            for region in URL:
+                ready, reason = probe(region, timeout)
+                previous_state = states[region]
+
+                if ready:
+                    consecutive_fails[region] = 0
+                    new_state = "HEALTHY"
+                else:
+                    consecutive_fails[region] += 1
+                    new_state = (
+                        "UNHEALTHY"
+                        if consecutive_fails[region] >= threshold
+                        else previous_state
+                    )
+
+                if new_state != previous_state:
+                    states[region] = new_state
+                    event = {
+                        "event": "state_change",
+                        "ts": time.time(),
+                        "region": region,
+                        "to": new_state,
+                        "reason": reason,
+                        "interval_s": interval,
+                        "threshold": threshold,
+                        "consecutive_fails": consecutive_fails[region],
+                    }
+                    events_file.write(json.dumps(event) + "\n")
+                    events_file.flush()
+
+            next_poll += interval
+            time.sleep(max(0, next_poll - time.monotonic()))
 
 
 if __name__ == "__main__":

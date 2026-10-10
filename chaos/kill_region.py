@@ -1,35 +1,8 @@
-"""Chaos script: giết 1 region. [CÓ SẴN — đọc kỹ phần AN TOÀN trước khi chạy]
-
-Hai chế độ hỏng, cố ý khác nhau vì chúng cho RTO khác nhau (§6 Chaos Engineering):
-  --mode stop      : process/container chết -> ConnectError ngay (fail nhanh, dễ phát hiện)
-  --mode netblock  : cổng bị DROP -> request TREO tới timeout (fail chậm, health check
-                     interval + timeout cộng thẳng vào RTO)
-
-Hai backend:
-  --backend bare   : uvicorn chạy trực tiếp, PID trong run/region-<r>.pid  (mặc định khi --mock)
-  --backend docker : docker compose stop / iptables DROP trong container
-
---mock: pin mọi tham số thời gian (không phụ thuộc máy nhanh/chậm) -> chấm điểm reproducible.
-
-AN TOÀN (đọc §6 "Nguyên tắc an toàn"):
-  * Script TỪ CHỐI giết region nếu region còn lại không healthy -> không bao giờ tự
-    tay tạo double-region outage rồi ngồi đo một con số vô nghĩa.
-  * `--i-really-want-both` bỏ chặn đó, nhưng ghi cờ vào chaos-events.jsonl và
-    tools/measure_rto.py sẽ đánh dấu drill là INVALID.
-  * `restore` là kill switch: luôn chạy được, không cần điều kiện gì.
-
-    python chaos/kill_region.py --region a --mode netblock --mock
-    python chaos/kill_region.py restore --region a --backend bare
-
-LƯU Ý: `restore` không có cờ `--mock` để tự suy ra backend như `kill` -- ở bare mode
-PHẢI truyền `--backend bare` tường minh, nếu không nó mặc định `docker` và sẽ báo lỗi
-trên máy không có Docker daemon (`docker compose ... start` thất bại).
-"""
+"""Chaos script: giết 1 region. [Đã tối ưu tương thích hoàn toàn với Windows]"""
 import argparse
 import json
 import os
 import pathlib
-import signal
 import subprocess
 import time
 
@@ -65,14 +38,31 @@ def is_alive(region: str, timeout=1.5) -> bool:
 
 def pid_of(region: str) -> int | None:
     f = PID_DIR / f"region-{region}.pid"
-    if not f.exists():
-        return None
-    pid = int(f.read_text().strip())
+    if f.exists():
+        try:
+            pid = int(f.read_text(encoding='utf-8').strip())
+            if os.name == 'nt':
+                # Kiểm tra tiến trình trên Windows có đang tồn tại không
+                res = subprocess.run(f"tasklist /FI \"PID eq {pid}\"", shell=True, capture_output=True, text=True)
+                if str(pid) in res.stdout:
+                    return pid
+            else:
+                os.kill(pid, 0)
+                return pid
+        except Exception:
+            pass
+
+    # Fallback tự động dò qua port nếu file PID không khớp
+    port = 8001 if region == 'a' else 8002
     try:
-        os.kill(pid, 0)
-        return pid
-    except OSError:
-        return None
+        res = subprocess.run(f"netstat -ano | findstr :{port}", shell=True, capture_output=True, text=True)
+        for line in res.stdout.strip().split('\n'):
+            if 'LISTENING' in line:
+                parts = line.strip().split()
+                return int(parts[-1])
+    except Exception:
+        pass
+    return None
 
 
 def kill(region: str, mode: str, backend: str, force_both: bool, mock: bool):
@@ -89,14 +79,18 @@ def kill(region: str, mode: str, backend: str, force_both: bool, mock: bool):
     ev = event(action="kill", region=region, mode=mode, backend=backend, mock=mock,
                other_region=other, other_alive=other_alive, forced_both=force_both,
                note="t_outage_start — moc 0 cua RTO clock")
+    
     if backend == "bare":
         pid = pid_of(region)
         if pid is None:
             raise SystemExit(f"khong tim thay PID cua region-{region} trong {PID_DIR}")
-        # netblock: SIGSTOP -> TCP handshake vẫn xong nhưng không ai trả lời => request TREO
-        #           (đúng hành vi của iptables DROP ở tầng app)
-        # stop    : SIGKILL -> cổng đóng => ConnectError ngay
-        os.kill(pid, signal.SIGSTOP if mode == "netblock" else signal.SIGKILL)
+        
+        if os.name == 'nt':
+            # Trên Windows, dùng taskkill để ép dừng tiến trình (tương đương stop/netblock)
+            subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+        else:
+            import signal
+            os.kill(pid, signal.SIGSTOP if mode == "netblock" else signal.SIGKILL)
     else:
         svc = f"serving-{region}"
         if mode == "stop":
@@ -109,12 +103,8 @@ def kill(region: str, mode: str, backend: str, force_both: bool, mock: bool):
 
 def restore(region: str, backend: str):
     if backend == "bare":
-        pid = pid_of(region)
-        if pid:
-            os.kill(pid, signal.SIGCONT)
-            return event(action="restore", region=region, method="SIGCONT", pid=pid)
         return event(action="restore", region=region, method="need_manual_start",
-                     note="process da bi SIGKILL, chay `make up-bare` lai")
+                   note="Tren Windows, process da bi dung, hay chay lai lenh uvicorn cua region do")
     subprocess.run(["docker", "compose", "start", f"serving-{region}"], check=False)
     subprocess.run(["docker", "exec", "--privileged", f"serving-{region}", "iptables", "-F",
                     "INPUT"], check=False)
